@@ -474,7 +474,7 @@ function ShopScreen({players,shopItems,shopMsg,fightNum,onBuy,onEnter,viewId,set
       <div style={{fontSize:22,color:"#ffd60a",letterSpacing:3,marginBottom:4}}>{isBoss?"⚠️ BOSS APPROACHING — ":""}DUNGEON SHOP</div>
       <div style={{color:"#333",fontSize:11,marginBottom:20}}>Next: Fight {fightNum+1}{(fightNum+1)%5===0?" (BOSS!)":""}</div>
       <div style={{background:"#0d0e18",border:"1px solid #1a1a2a",borderRadius:10,padding:16,marginBottom:20,maxWidth:500,textAlign:"center",width:"100%"}}>
-        <div style={{fontSize:28,marginBottom:8}}>\u{1F9D9}\u{200D}\u{2642}\u{FE0F}</div>
+        <div style={{fontSize:28,marginBottom:8}}>{"\u{1F9D9}\u{200D}\u{2642}\u{FE0F}"}</div>
         <div style={{fontSize:13,color:"#c9a",fontStyle:"italic"}}>"{shopMsg}"</div>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",justifyContent:"center"}}>
@@ -496,7 +496,7 @@ function ShopScreen({players,shopItems,shopMsg,fightNum,onBuy,onEnter,viewId,set
               <div key={i} style={{background:"#0d0e18",border:"1px solid "+(canAfford?catColor+"44":"#111"),borderRadius:8,padding:12,opacity:canAfford?1:0.4}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                   <div style={{fontSize:12,color:catColor}}>{item.category==="relic"?"◆":item.category==="skill"?"✦":"•"} {item.name}</div>
-                  <div style={{fontSize:11,color:canAfford?"#ffd60a":"#333"}}>\u{1F4B0}{item.cost}</div>
+                  <div style={{fontSize:11,color:canAfford?"#ffd60a":"#333"}}>{"\u{1F4B0}"}{item.cost}</div>
                 </div>
                 <div style={{fontSize:10,color:"#444",marginBottom:8}}>{item.desc}</div>
                 <button onClick={()=>onBuy(player.id,item)} disabled={!canAfford} style={{width:"100%",background:canAfford?catColor+"12":"transparent",border:"1px solid "+(canAfford?catColor+"44":"#1a1a1a"),color:canAfford?catColor:"#2a2a2a",padding:4,borderRadius:4,cursor:canAfford?"pointer":"not-allowed",fontSize:11,fontFamily:"'Courier New',monospace"}}>BUY</button>
@@ -525,6 +525,625 @@ function GameOverScreen({fightNum,players,onRestart}) {
         ))}
       </div>
       <button onClick={onRestart} style={{background:"#ffd60a",border:"none",color:"#000",padding:"12px 40px",borderRadius:6,fontSize:16,cursor:"pointer",fontWeight:"bold",fontFamily:"'Courier New',monospace",letterSpacing:3}}>PLAY AGAIN</button>
+    </div>
+  );
+}
+
+export default function DungeonRift() {
+  const [screen, setScreen] = useState("lobby");
+  const [gameCode] = useState(()=>genCode());
+  const [players, setPlayers] = useState([]);
+  const [ready, setReady] = useState({});
+  const [cfg, setCfg] = useState({difficulty:"medium",hostPlay:false,tutorial:false});
+  const [fightNum, setFightNum] = useState(0);
+  const [enemies, setEnemies] = useState([]);
+  const [positions, setPositions] = useState({players:{},enemies:{}});
+  const [gs, setGs] = useState(8);
+  const [queue, setQueue] = useState([]);
+  const [qIdx, setQIdx] = useState(0);
+  const [hasMoved, setHasMoved] = useState(false);
+  const [selAct, setSelAct] = useState(null);
+  const [hlMove, setHlMove] = useState([]);
+  const [hlAtk, setHlAtk] = useState([]);
+  const [hlAoe, setHlAoe] = useState([]);
+  const [hovSkill, setHovSkill] = useState(null);
+  const [hitFx, setHitFx] = useState([]);
+  const [enemyActing, setEnemyActing] = useState(false);
+  const [shopItems, setShopItems] = useState({});
+  const [shopMsg, setShopMsg] = useState(SK_LINES[0]);
+  const [shopBuyCD, setShopBuyCD] = useState(false);
+  const [shopVid, setShopVid] = useState(null);
+  const [log, setLog] = useState([]);
+  const logRef = useRef(null);
+  const [notif, setNotif] = useState(null);
+
+  const enemiesRef = useRef(enemies);
+  const playersRef = useRef(players);
+  const posRef = useRef(positions);
+  const queueRef = useRef(queue);
+  const gsRef = useRef(gs);
+  const fightRef = useRef(fightNum);
+  useEffect(()=>{enemiesRef.current=enemies;},[enemies]);
+  useEffect(()=>{playersRef.current=players;},[players]);
+  useEffect(()=>{posRef.current=positions;},[positions]);
+  useEffect(()=>{queueRef.current=queue;},[queue]);
+  useEffect(()=>{gsRef.current=gs;},[gs]);
+  useEffect(()=>{fightRef.current=fightNum;},[fightNum]);
+
+  const pushLog = useCallback((msg,type)=>{setLog(prev=>[...prev.slice(-60),{msg,type:type||"info",id:uid()}]);},[]);
+  const showNotif = useCallback((msg,color)=>{setNotif({msg,color:color||"#ffd60a"});setTimeout(()=>setNotif(null),2200);},[]);
+  const spawnFx = useCallback((row,col,label,color)=>{
+    const fid=uid();
+    setHitFx(prev=>[...prev,{id:fid,row,col,label,color}]);
+    setTimeout(()=>setHitFx(prev=>prev.filter(f=>f.id!==fid)),900);
+  },[]);
+
+  useEffect(()=>{if(logRef.current)logRef.current.scrollTop=logRef.current.scrollHeight;},[log]);
+
+  const chatterRef = useRef(null);
+  const startChatter = useCallback(()=>{
+    if(chatterRef.current)clearInterval(chatterRef.current);
+    setShopMsg(randPick(SK_LINES));
+    chatterRef.current=setInterval(()=>setShopMsg(randPick(SK_LINES)),7000);
+  },[]);
+  useEffect(()=>()=>{if(chatterRef.current)clearInterval(chatterRef.current);},[]);
+
+  const addPlayer = ()=>{const id=uid();setPlayers(prev=>[...prev,makePlayer(id,"Player "+(prev.length+1),prev.length===0)]);};
+  const toggleReady = id=>setReady(prev=>({...prev,[id]:!prev[id]}));
+  const allReady = players.length>0&&players.every(p=>ready[p.id]);
+
+  const goToShop = (pls)=>{
+    const items={}; pls.forEach(p=>{items[p.id]=genShopItems(p);});
+    setShopItems(items); setShopVid(pls[0]?pls[0].id:null); setFightNum(0); setLog([]); setScreen("shop"); startChatter();
+  };
+
+  const startWorld = ()=>{if(cfg.tutorial){setScreen("tutorial");return;}goToShop(players);};
+
+  const buyItem = (pid,item)=>{
+    setPlayers(prev=>prev.map(p=>{
+      if(p.id!==pid||p.gold<item.cost) return p;
+      let u={...p};
+      if(item.category==="relic") u=applyRelic(u,item);
+      else if(item.category==="skill") {u.skills=[...u.skills,item];u.gold-=item.cost;}
+      else {u.consumables=[...u.consumables,item];u.gold-=item.cost;}
+      return u;
+    }));
+    setShopItems(prev=>({...prev,[pid]:prev[pid].filter(i=>i.id!==item.id)}));
+    if(!shopBuyCD){setShopBuyCD(true);setShopMsg(randPick(SK_BUY));setTimeout(()=>{setShopBuyCD(false);setShopMsg(randPick(SK_LINES));},3500);}
+  };
+
+  const enterCombat = ()=>{
+    if(chatterRef.current)clearInterval(chatterRef.current);
+    const nf=fightNum+1; setFightNum(nf);
+    const isBoss=nf%5===0;
+    const dm=cfg.difficulty==="easy"?0.7:cfg.difficulty==="hard"?1.4:1.0;
+    let newEnemies;
+    if(isBoss){
+      const bosses=ENEMY_TYPES.filter(e=>e.isBoss);
+      newEnemies=[makeEnemy(bosses[(Math.floor(nf/5)-1)%bosses.length],nf,dm)];
+    } else {
+      const nonBoss=ENEMY_TYPES.filter(e=>!e.isBoss);
+      const cnt=Math.max(1,Math.min(players.length+randInt(-1,2),6));
+      const shuffled=[...nonBoss].sort(()=>Math.random()-0.5);
+      newEnemies=Array.from({length:cnt},(_,i)=>makeEnemy(shuffled[i%shuffled.length],nf,dm));
+    }
+    const healed=players.map(p=>({...p,hp:p.maxHp,isAlive:true,buffs:[],debuffs:[],energy:p.maxEnergy}));
+    setPlayers(healed);
+    const total=healed.length+newEnemies.length;
+    const newGs=calcGridSize(total); setGs(newGs);
+    const newPos=placeUnits(healed,newEnemies,newGs);
+    setPositions(newPos); setEnemies(newEnemies);
+    const order=[...healed.map(p=>({id:p.id,isEnemy:false})),...newEnemies.map(e=>({id:e.id,isEnemy:true}))].sort(()=>Math.random()-0.5);
+    setQueue(order); setQIdx(0); setHasMoved(false); setSelAct(null);
+    setHlMove([]); setHlAtk([]); setHlAoe([]); setHitFx([]); setEnemyActing(false); setLog([]);
+    setScreen("combat");
+    pushLog("Fight "+nf+" begins!"+(isBoss?" BOSS FIGHT!":""),"system");
+  };
+
+  const endFight = useCallback((victory,latestE,latestP)=>{
+    setEnemyActing(false);
+    if(victory){
+      const fn=fightRef.current;
+      const isBoss=fn%5===0;
+      const updP=latestP.map(p=>{
+        if(!p.isAlive) return p;
+        const goldGain=randInt(isBoss?90:25,isBoss?110:30);
+        const xpGain=randInt(isBoss?70:20,isBoss?80:25);
+        let xp=p.xp+xpGain,level=p.level,xpToNext=p.xpToNext,maxHp=p.maxHp,atk=p.atk;
+        while(xp>=xpToNext){xp-=xpToNext;level++;xpToNext=Math.round(xpToNext*1.4);maxHp=Math.round(maxHp*1.05);atk=Math.round(atk*1.05);}
+        return {...p,gold:p.gold+goldGain,xp,level,xpToNext,maxHp,atk};
+      });
+      setPlayers(updP);
+      showNotif(isBoss?"BOSS DEFEATED!":"Victory!","#06d6a0");
+      setTimeout(()=>{
+        const items={}; updP.forEach(p=>{items[p.id]=genShopItems(p);});
+        setShopItems(items); setShopVid(updP[0]?updP[0].id:null); setScreen("shop"); startChatter();
+      },1800);
+    } else {
+      showNotif("All heroes fell...","#e63946");
+      setTimeout(()=>setScreen("gameover"),2000);
+    }
+  },[showNotif,startChatter]);
+
+  const advanceTurn = useCallback((latestE,latestP)=>{
+    const aliveE=latestE.filter(e=>e.isAlive);
+    const aliveP=latestP.filter(p=>p.isAlive);
+    if(aliveE.length===0){endFight(true,latestE,latestP);return;}
+    if(aliveP.length===0){endFight(false,latestE,latestP);return;}
+    setHasMoved(false); setSelAct(null); setHlMove([]); setHlAtk([]); setHlAoe([]);
+    setQIdx(prev=>{
+      const q=queueRef.current;
+      let next=(prev+1)%q.length;
+      for(let i=0;i<q.length;i++){
+        const slot=q[next];
+        const alive=slot.isEnemy?(latestE.find(e=>e.id===slot.id)||{}).isAlive:(latestP.find(p=>p.id===slot.id)||{}).isAlive;
+        if(alive) break;
+        next=(next+1)%q.length;
+      }
+      return next;
+    });
+  },[endFight]);
+
+  const doEnemyTurn = useCallback((rawEnemy)=>{
+    const latestE=enemiesRef.current, latestP=playersRef.current, latestPos=posRef.current;
+    const ticked=tickUnit(latestE.find(e=>e.id===rawEnemy.id)||rawEnemy);
+    const newEnergy=Math.min(ticked.maxEnergy,ticked.energy+ticked.energyRegen);
+    const tickedE={...ticked,energy:newEnergy};
+    let updE=latestE.map(e=>e.id===rawEnemy.id?tickedE:e);
+    setEnemies(updE);
+    if(!tickedE.isAlive){setEnemyActing(false);advanceTurn(updE,latestP);return;}
+    if(tickedE.debuffs.find(d=>d.type==="Stun")){pushLog(tickedE.name+" is stunned!","debuff");setEnemyActing(false);advanceTurn(updE,latestP);return;}
+    const alivePl=latestP.filter(p=>p.isAlive);
+    if(!alivePl.length){setEnemyActing(false);advanceTurn(updE,latestP);return;}
+    const target=randPick(alivePl);
+    const ePos=latestPos.enemies[tickedE.id], tPos=latestPos.players[target.id];
+    let newPos={...latestPos};
+    if(ePos&&tPos&&manhattan(ePos,tPos)>2){
+      const allOcc=[...Object.values(latestPos.players),...Object.values(latestPos.enemies)];
+      const slow=tickedE.debuffs.find(d=>d.type==="Slow");
+      const mr=Math.max(1,tickedE.moveRange-(slow?slow.val:0));
+      const movable=getReachable(ePos,mr,gsRef.current,allOcc.filter(o=>!(o.row===ePos.row&&o.col===ePos.col)));
+      if(movable.length>0){
+        const best=movable.reduce((a,b)=>manhattan(b,tPos)<manhattan(a,tPos)?b:a);
+        newPos={...newPos,enemies:{...newPos.enemies,[tickedE.id]:best}};
+        setPositions(newPos);
+      }
+    }
+    const usable=tickedE.skills.map(sid=>SKILLS.find(s=>s.id===sid)).filter(s=>s&&(s.dmgMult>0||s.dispel)&&s.target==="enemy"&&newEnergy>=(s.cost-(tickedE.skillCostReduce||0)));
+    const skill=usable.length>0&&Math.random()>.35?randPick(usable):null;
+
+    const resolveAttack=(attacker,sk,tgt,curE,curP,energyPool)=>{
+      const tPos2=posRef.current.players[tgt.id];
+      if(!tPos2) return [curE,curP];
+      let totalDmg=0; let updP2=[...curP], updE2=[...curE];
+      if(sk){
+        const dmg=calcSkillDmg(attacker,sk,tgt,sk.trueDmg);
+        const reaction=sk.status?checkReaction(tgt,sk.status,attacker.atk):null;
+        totalDmg=dmg+(reaction?reaction.dmg:0);
+        updP2=curP.map(p=>{
+          if(p.id!==tgt.id) return p;
+          let hp=Math.max(0,p.hp-totalDmg);
+          let u={...p,hp};
+          if(sk.status&&DEBUFF_TYPES.has(sk.status.type)) u=applyStatus(u,sk.status,attacker.atk);
+          if(hp<=0&&u.revive&&!u.hasRevived){hp=Math.round(u.maxHp*.3);u={...u,hp,isAlive:true,hasRevived:true};pushLog(u.name+" revives!","system");}
+          else u.isAlive=hp>0;
+          return u;
+        });
+        updE2=curE.map(e=>e.id===attacker.id?{...e,energy:Math.max(0,energyPool-sk.cost)}:e);
+        if(tPos2){spawnFx(tPos2.row,tPos2.col,"-"+totalDmg,"#e63946");if(reaction)spawnFx(tPos2.row,Math.max(0,tPos2.col-1),reaction.name,reaction.color);}
+        pushLog(attacker.name+" uses "+sk.name+" on "+tgt.name+" for "+totalDmg,"enemy");
+      } else {
+        totalDmg=calcBasicDmg(attacker,tgt);
+        updP2=curP.map(p=>{
+          if(p.id!==tgt.id) return p;
+          let hp=Math.max(0,p.hp-totalDmg);
+          let u={...p,hp};
+          if(hp<=0&&u.revive&&!u.hasRevived){hp=Math.round(u.maxHp*.3);u={...u,hp,isAlive:true,hasRevived:true};pushLog(u.name+" revives!","system");}
+          else u.isAlive=hp>0;
+          return u;
+        });
+        if(tPos2) spawnFx(tPos2.row,tPos2.col,"-"+totalDmg,"#e63946");
+        pushLog(attacker.name+" attacks "+tgt.name+" for "+totalDmg,"enemy");
+      }
+      return [updE2,updP2];
+    };
+
+    setTimeout(()=>{
+      const ePosFresh=posRef.current.enemies[tickedE.id], tPosFresh=posRef.current.players[target.id];
+      if(!tPosFresh||!ePosFresh){setEnemyActing(false);advanceTurn(enemiesRef.current,playersRef.current);return;}
+      let [updE2,updP] = resolveAttack(tickedE,skill,target,enemiesRef.current,playersRef.current,newEnergy);
+      setEnemies(updE2); setPlayers(updP);
+      if(tickedE.isBoss){
+        setTimeout(()=>{
+          const latestE2=enemiesRef.current, latestP2=playersRef.current;
+          const alivePl2=latestP2.filter(p=>p.isAlive);
+          if(!alivePl2.length){setEnemyActing(false);advanceTurn(latestE2,latestP2);return;}
+          const target2=randPick(alivePl2);
+          const bossE=latestE2.find(e=>e.id===tickedE.id)||tickedE;
+          const usable2=bossE.skills.map(sid=>SKILLS.find(s=>s.id===sid)).filter(s=>s&&s.dmgMult>0&&s.target==="enemy"&&bossE.energy>=(s.cost-(bossE.skillCostReduce||0)));
+          const skill2=usable2.length>0&&Math.random()>.3?randPick(usable2):null;
+          pushLog(bossE.name+" attacks AGAIN!","system");
+          const [updE3,updP2] = resolveAttack(bossE,skill2,target2,latestE2,latestP2,bossE.energy);
+          setEnemies(updE3); setPlayers(updP2);
+          setEnemyActing(false); advanceTurn(updE3,updP2);
+        },700);
+      } else { setEnemyActing(false); advanceTurn(updE2,updP); }
+    },500);
+  },[advanceTurn,pushLog,spawnFx]);
+
+  useEffect(()=>{
+    if(screen!=="combat") return;
+    const slot=queue[qIdx];
+    if(!slot||!slot.isEnemy) return;
+    const enemy=enemies.find(e=>e.id===slot.id);
+    if(!enemy||!enemy.isAlive){advanceTurn(enemies,players);return;}
+    setEnemyActing(true);
+    const t=setTimeout(()=>doEnemyTurn(enemy),900);
+    return ()=>clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[qIdx,screen]);
+
+  useEffect(()=>{
+    if(screen!=="combat") return;
+    const slot=queue[qIdx];
+    if(!slot||slot.isEnemy) return;
+    const player=players.find(p=>p.id===slot.id);
+    if(!player) return;
+    if(!player.isAlive){advanceTurn(enemies,players);return;}
+    const ticked=tickUnit(player);
+    const newE=Math.min(ticked.maxEnergy,ticked.energy+ticked.energyRegen);
+    const updP=players.map(p=>p.id===slot.id?{...ticked,energy:newE}:p);
+    setPlayers(updP);
+    if(!ticked.isAlive) setTimeout(()=>advanceTurn(enemies,updP),50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[qIdx,screen]);
+
+  const currentSlot = queue[qIdx];
+  const currentIsEnemy = currentSlot?currentSlot.isEnemy:false;
+  const currentPlayer = !currentIsEnemy?players.find(p=>p.id===(currentSlot?currentSlot.id:null)):null;
+  const isMyTurn = !!currentPlayer&&currentPlayer.isAlive&&!enemyActing;
+  const getOccupied = ()=>[...Object.values(positions.players),...Object.values(positions.enemies)];
+  const getSkillRange = (skill)=>skill.range!==undefined?skill.range:3;
+
+  const selectAct = (act)=>{
+    if(!isMyTurn) return;
+    if(act===selAct){setSelAct(null);setHlMove([]);setHlAtk([]);setHlAoe([]);return;}
+    setSelAct(act);
+    const pPos=positions.players[currentPlayer.id];
+    if(!pPos) return;
+    if(act==="move"){
+      if(hasMoved){showNotif("Already moved!","#888");setSelAct(null);return;}
+      const occ=getOccupied().filter(o=>!(o.row===pPos.row&&o.col===pPos.col));
+      const slow=currentPlayer.debuffs.find(d=>d.type==="Slow");
+      const mr=Math.max(1,currentPlayer.moveRange-(slow?slow.val:0));
+      setHlMove(getReachable(pPos,mr,gs,occ));setHlAtk([]);setHlAoe([]);
+    } else if(act==="basic"){
+      setHlAtk(getAttackable(pPos,2,gs));setHlMove([]);setHlAoe([]);
+    } else {
+      const skill=currentPlayer.skills.find(s=>s.id===act);
+      if(skill){
+        const r=getSkillRange(skill);
+        if(skill.aoe&&r===0){setHlAtk([pPos]);setHlMove([]);setHlAoe([]);}
+        else {setHlAtk(getAttackable(pPos,r,gs));setHlMove([]);setHlAoe([]);}
+      }
+    }
+  };
+
+  const clearAction = ()=>{setSelAct(null);setHlMove([]);setHlAtk([]);setHlAoe([]);};
+  const finishAction = (updE,updP)=>{clearAction();advanceTurn(updE,updP);};
+
+  const handleCellHover = (row,col)=>{
+    if(!isMyTurn||!selAct||selAct==="move"||selAct==="basic") return;
+    const skill=currentPlayer&&currentPlayer.skills.find(s=>s.id===selAct);
+    if(!skill||!skill.aoer||skill.aoer===0) return;
+    if(hlAtk.some(c=>c.row===row&&c.col===col)) setHlAoe(getAoeTargets({row,col},skill.aoer,gs));
+    else setHlAoe([]);
+  };
+
+  const doBasicAtk = (attacker,target)=>{
+    const dmg=calcBasicDmg(attacker,target);
+    const updE=enemies.map(e=>e.id!==target.id?e:{...e,hp:Math.max(0,e.hp-dmg),isAlive:e.hp-dmg>0});
+    setEnemies(updE);
+    const ep=positions.enemies[target.id];
+    if(ep)spawnFx(ep.row,ep.col,"-"+dmg,"#e05a00");
+    pushLog(attacker.name+" attacks "+target.name+" for "+dmg,"combat");
+    finishAction(updE,players);
+  };
+
+  const doSkillAtk = (attacker,target,skill,cost)=>{
+    const dmg=(skill.dmgMult||0)>0?calcSkillDmg(attacker,skill,target,skill.trueDmg):0;
+    const reaction=skill.status?checkReaction(target,skill.status,attacker.atk):null;
+    const total=dmg+(reaction?reaction.dmg:0);
+    const healAmt=skill.lifesteal?Math.round(total*skill.lifesteal):0;
+    let updE=enemies.map(e=>{
+      if(e.id!==target.id) return e;
+      let u={...e,hp:Math.max(0,e.hp-total),isAlive:e.hp-total>0};
+      if(skill.status&&DEBUFF_TYPES.has(skill.status.type)) u=applyStatus(u,skill.status,attacker.atk);
+      if(skill.dispel) u={...u,buffs:[]};
+      return u;
+    });
+    let updP=players.map(p=>{
+      if(p.id!==attacker.id) return p;
+      let u={...p,energy:p.energy-cost};
+      if(healAmt>0) u.hp=Math.min(p.maxHp,p.hp+healAmt+(p.healBonus?Math.round(p.atk*p.healBonus):0));
+      return u;
+    });
+    setEnemies(updE); setPlayers(updP);
+    const ep=positions.enemies[target.id];
+    if(ep){spawnFx(ep.row,ep.col,"-"+total,skill.color||"#e05a00");if(reaction)spawnFx(ep.row,Math.max(0,ep.col-1),reaction.name,reaction.color);}
+    pushLog(attacker.name+" uses "+skill.name+" on "+target.name+" for "+total+(reaction?" "+reaction.name:"")+(healAmt?" (+"+healAmt+"hp)":""),"combat");
+    finishAction(updE,updP);
+  };
+
+  const doRadiusAtk = (attacker,skill,cost,center)=>{
+    const aoeCells=getAoeTargets(center,skill.aoer,gs);
+    let updE=[...enemies]; let hits=0;
+    enemies.filter(e=>e.isAlive).forEach(e=>{
+      const ep=positions.enemies[e.id];
+      if(!ep||!aoeCells.some(c=>c.row===ep.row&&c.col===ep.col)) return;
+      const dmg=calcSkillDmg(attacker,skill,e,skill.trueDmg);
+      const reaction=skill.status?checkReaction(e,skill.status,attacker.atk):null;
+      const total=dmg+(reaction?reaction.dmg:0);
+      updE=updE.map(x=>{
+        if(x.id!==e.id) return x;
+        let u={...x,hp:Math.max(0,x.hp-total),isAlive:x.hp-total>0};
+        if(skill.status&&DEBUFF_TYPES.has(skill.status.type)) u=applyStatus(u,skill.status,attacker.atk);
+        if(skill.dispel) u={...u,buffs:[]};
+        return u;
+      });
+      spawnFx(ep.row,ep.col,"-"+total,skill.color||"#e05a00");
+      if(reaction) spawnFx(ep.row,Math.max(0,ep.col-1),reaction.name,reaction.color);
+      hits++;
+    });
+    const updP=players.map(p=>p.id!==attacker.id?p:{...p,energy:p.energy-cost});
+    setEnemies(updE); setPlayers(updP);
+    pushLog(attacker.name+" uses "+skill.name+" hitting "+hits+" enem"+(hits===1?"y":"ies"),"combat");
+    finishAction(updE,updP);
+  };
+
+  const doRadiusDispel = (attacker,skill,cost,center)=>{
+    const aoeCells=getAoeTargets(center,skill.aoer,gs);
+    let updE=enemies.map(e=>{
+      const ep=positions.enemies[e.id];
+      if(!ep||!aoeCells.some(c=>c.row===ep.row&&c.col===ep.col)) return e;
+      return {...e,buffs:[]};
+    });
+    const updP=players.map(p=>p.id!==attacker.id?p:{...p,energy:p.energy-cost});
+    setEnemies(updE); setPlayers(updP);
+    pushLog(attacker.name+" uses "+skill.name+" — strips buffs!","combat");
+    finishAction(updE,updP);
+  };
+
+  const doAoeBuff = (attacker,skill,cost)=>{
+    let updP=players.map(p=>{
+      if(!p.isAlive) return p;
+      let u={...p};
+      if(skill.status) u=applyStatus(u,skill.status,attacker.atk);
+      if(p.id===attacker.id) u={...u,energy:u.energy-cost};
+      return u;
+    });
+    setPlayers(updP);
+    pushLog(attacker.name+" uses "+skill.name+" on all allies","support");
+    finishAction(enemies,updP);
+  };
+
+  const doSelf = (attacker,skill,cost)=>{
+    let updP=players.map(p=>{
+      if(p.id!==attacker.id) return p;
+      let u={...p,energy:p.energy-cost};
+      if(skill.status) u=applyStatus(u,skill.status,attacker.atk);
+      if(skill.cleanse) u={...u,debuffs:[]};
+      if(skill.heal){const h=Math.round(attacker.atk*skill.heal+(p.healBonus?Math.round(attacker.atk*p.healBonus):0));u.hp=Math.min(p.maxHp,p.hp+h);}
+      return u;
+    });
+    setPlayers(updP);
+    pushLog(attacker.name+" uses "+skill.name,"support");
+    finishAction(enemies,updP);
+  };
+
+  const doSupport = (attacker,target,skill,cost)=>{
+    let updP=players.map(p=>{
+      let u={...p};
+      if(p.id===attacker.id) u={...u,energy:u.energy-cost};
+      if(p.id===target.id){
+        if(skill.status) u=applyStatus(u,skill.status,attacker.atk);
+        if(skill.cleanse) u={...u,debuffs:[]};
+        if(skill.heal){const h=Math.round(attacker.atk*skill.heal+(attacker.healBonus?Math.round(attacker.atk*attacker.healBonus):0));u.hp=Math.min(p.maxHp,p.hp+h);}
+      }
+      return u;
+    });
+    setPlayers(updP);
+    pushLog(attacker.name+" uses "+skill.name+" on "+target.name,"support");
+    finishAction(enemies,updP);
+  };
+
+  const handleCell = (row,col)=>{
+    if(!isMyTurn||!selAct) return;
+    const pPos=positions.players[currentPlayer.id];
+    if(!pPos) return;
+    if(selAct==="move"){
+      if(!hlMove.some(c=>c.row===row&&c.col===col)) return;
+      setPositions(prev=>({...prev,players:{...prev.players,[currentPlayer.id]:{row,col}}}));
+      setHasMoved(true); clearAction();
+      pushLog(currentPlayer.name+" moves","move");
+      return;
+    }
+    if(!hlAtk.some(c=>c.row===row&&c.col===col)) return;
+    const enemyAt=enemies.find(e=>{const ep=positions.enemies[e.id];return ep&&ep.row===row&&ep.col===col&&e.isAlive;});
+    const allyAt=players.find(p=>{const pp=positions.players[p.id];return pp&&pp.row===row&&pp.col===col&&p.id!==currentPlayer.id&&p.isAlive;});
+    const isSelf=pPos.row===row&&pPos.col===col;
+    if(selAct==="basic"){if(!enemyAt) return; doBasicAtk(currentPlayer,enemyAt); return;}
+    const skill=currentPlayer.skills.find(s=>s.id===selAct);
+    if(!skill) return;
+    const cost=Math.max(1,skill.cost-(currentPlayer.skillCostReduce||0));
+    if(currentPlayer.energy<cost){showNotif("Not enough energy!","#e63946");return;}
+    if(skill.aoe&&skill.target==="ally"){doAoeBuff(currentPlayer,skill,cost);return;}
+    if(skill.aoer>0&&skill.target==="enemy"){doRadiusAtk(currentPlayer,skill,cost,{row,col});return;}
+    if(skill.aoer>0&&skill.dispel){doRadiusDispel(currentPlayer,skill,cost,{row,col});return;}
+    if(skill.target==="enemy"&&enemyAt){doSkillAtk(currentPlayer,enemyAt,skill,cost);return;}
+    if(skill.target==="self"&&isSelf){doSelf(currentPlayer,skill,cost);return;}
+    if(skill.target==="ally"&&allyAt){doSupport(currentPlayer,allyAt,skill,cost);return;}
+    if(skill.target==="ally"&&isSelf){doSupport(currentPlayer,currentPlayer,skill,cost);return;}
+  };
+
+  const skipTurn = ()=>{
+    if(!isMyTurn) return;
+    const ticked=tickUnit(currentPlayer);
+    const newE=Math.min(ticked.maxEnergy,ticked.energy+20);
+    const updP=players.map(p=>p.id!==currentPlayer.id?p:{...ticked,energy:newE});
+    setPlayers(updP);
+    pushLog(currentPlayer.name+" skips +20E","info");
+    clearAction(); advanceTurn(enemies,updP);
+  };
+
+  const useConsumable = (item)=>{
+    if(!isMyTurn) return;
+    const updP=players.map(p=>{
+      if(p.id!==currentPlayer.id) return p;
+      let u={...p,consumables:p.consumables.filter(c=>c.id!==item.id)};
+      if(item.effect.healPct) u.hp=Math.min(p.maxHp,p.hp+Math.round(p.maxHp*item.effect.healPct));
+      if(item.effect.healFull) u.hp=p.maxHp;
+      if(item.effect.energy) u.energy=Math.min(p.maxEnergy,p.energy+item.effect.energy);
+      if(item.effect.cleanse) u.debuffs=[];
+      if(item.effect.gold) u.gold=(u.gold||0)+item.effect.gold;
+      if(item.effect.atkBuff) u=applyStatus(u,{type:"AttackUp",turns:3,val:40},p.atk);
+      if(item.effect.defBuff) u=applyStatus(u,{type:"DefenseUp",turns:2,val:40},p.atk);
+      return u;
+    });
+    setPlayers(updP);
+    pushLog(currentPlayer.name+" uses "+item.name,"support");
+  };
+
+  const getCellOcc = (row,col)=>{
+    const pe=Object.entries(positions.players).find(([,p])=>p.row===row&&p.col===col);
+    if(pe){const p=players.find(x=>x.id===pe[0]);return p?{...p,side:"player"}:null;}
+    const ee=Object.entries(positions.enemies).find(([,p])=>p.row===row&&p.col===col);
+    if(ee){const e=enemies.find(x=>x.id===ee[0]);return e?{...e,side:"enemy"}:null;}
+    return null;
+  };
+
+  if(screen==="lobby") return <LobbyScreen gameCode={gameCode} players={players} ready={ready} onAdd={addPlayer} onToggle={toggleReady} onNext={()=>setScreen("worldcreation")} allReady={allReady}/>;
+  if(screen==="worldcreation") return <WorldScreen cfg={cfg} onChange={setCfg} onStart={startWorld} players={players}/>;
+  if(screen==="tutorial") return <TutorialScreen onFinish={()=>goToShop(players)}/>;
+  if(screen==="shop") return <ShopScreen players={players} shopItems={shopItems} shopMsg={shopMsg} fightNum={fightNum} onBuy={buyItem} onEnter={enterCombat} viewId={shopVid} setViewId={setShopVid}/>;
+  if(screen==="gameover") return <GameOverScreen fightNum={fightNum} players={players} onRestart={()=>{setPlayers([]);setScreen("lobby");}}/>;
+
+  const currLabel = currentSlot?(currentIsEnemy?(enemies.find(e=>e.id===currentSlot.id)||{}).name:(players.find(p=>p.id===currentSlot.id)||{}).name)||"—":"—";
+  const actSkill = selAct&&selAct!=="basic"&&selAct!=="move"&&currentPlayer?currentPlayer.skills.find(s=>s.id===selAct):null;
+  const isSupAct = actSkill?actSkill.isSupport:false;
+
+  return (
+    <div style={{minHeight:"100vh",background:"#07080f",color:"#dde",fontFamily:"'Courier New',monospace",display:"flex",flexDirection:"column",alignItems:"center",padding:"8px 6px",userSelect:"none"}}>
+      <style>{`
+        @keyframes floatUp{0%{opacity:1;transform:translateY(0) scale(1)}80%{opacity:.8}100%{opacity:0;transform:translateY(-48px) scale(1.15)}}
+        @keyframes pulseOp{0%,100%{opacity:.6}50%{opacity:1}}
+        @keyframes shakeLR{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+        @keyframes glowBdr{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 8px 2px #4cc9f066}}
+        .mc:hover{background:rgba(76,201,240,.38)!important;cursor:pointer}
+        .ac:hover{background:rgba(224,90,0,.38)!important;cursor:pointer}
+        .sc:hover{background:rgba(6,214,160,.38)!important;cursor:pointer}
+      `}</style>
+
+      {notif&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:notif.color,color:"#000",padding:"10px 28px",borderRadius:8,fontWeight:"bold",fontSize:17,zIndex:999}}>{notif.msg}</div>}
+      {hovSkill&&<div style={{position:"fixed",bottom:14,left:"50%",transform:"translateX(-50%)",background:"#12131e",border:"1px solid "+(hovSkill.color||"#444"),borderRadius:8,padding:"10px 18px",zIndex:998,maxWidth:380,textAlign:"center",pointerEvents:"none"}}>
+        <div style={{color:hovSkill.color||"#dde",fontWeight:"bold",fontSize:14,marginBottom:4}}>{hovSkill.name}</div>
+        <div style={{color:"#999",fontSize:12}}>{hovSkill.desc}</div>
+        {hovSkill.cost&&currentPlayer&&<div style={{color:"#ffd60a",fontSize:11,marginTop:4}}>Energy: {Math.max(1,hovSkill.cost-(currentPlayer.skillCostReduce||0))}</div>}
+      </div>}
+
+      <div style={{width:"100%",maxWidth:980}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #1a1a28",paddingBottom:6,marginBottom:8}}>
+          <div style={{fontSize:13,color:"#666"}}>Fight {fightNum}{fightNum%5===0&&<span style={{color:"#e63946",marginLeft:6}}>BOSS</span>}</div>
+          <div style={{fontSize:14,fontWeight:"bold",color:currentIsEnemy?"#e05a00":"#4cc9f0",animation:enemyActing?"pulseOp 1s infinite":"none"}}>{enemyActing?"AI ":""}{currLabel}'s turn{enemyActing?" — acting...":""}</div>
+          <div style={{fontSize:12,color:"#555"}}>Enemies: {enemies.filter(e=>e.isAlive).length}/{enemies.length}</div>
+        </div>
+
+        <div style={{display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+          <div style={{position:"relative",flex:"0 0 auto"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat("+gs+", "+CELL_SIZE+"px)",gap:CELL_GAP}}>
+              {Array.from({length:gs},(_,row)=>Array.from({length:gs},(_,col)=>{
+                const occ=getCellOcc(row,col);
+                const isMove=hlMove.some(c=>c.row===row&&c.col===col);
+                const isAtk=hlAtk.some(c=>c.row===row&&c.col===col);
+                const isAoePrev=hlAoe.some(c=>c.row===row&&c.col===col);
+                const hpPct=occ?occ.hp/occ.maxHp:0;
+                const statuses=occ?[...(occ.buffs||[]),...(occ.debuffs||[])]:[];
+                const isCurr=occ&&currentSlot&&occ.id===currentSlot.id;
+                const cellCls=isMove?"mc":(isAtk&&isSupAct)?"sc":isAtk?"ac":"";
+                const aoeHL=isAoePrev&&!isAtk;
+                return (
+                  <div key={row+"-"+col} className={cellCls}
+                    onClick={()=>handleCell(row,col)}
+                    onMouseEnter={()=>handleCellHover(row,col)}
+                    onMouseLeave={()=>setHlAoe([])}
+                    style={{width:CELL_SIZE,height:CELL_SIZE,position:"relative",boxSizing:"border-box",
+                      background:isMove?"rgba(76,201,240,.14)":(isAtk&&isSupAct)?"rgba(6,214,160,.14)":isAtk?"rgba(224,90,0,.14)":aoeHL?"rgba(255,200,0,.10)":"#0c0d16",
+                      border:isMove?"1px solid #4cc9f060":(isAtk&&isSupAct)?"1px solid #06d6a060":isAtk?"1px solid #e05a0060":aoeHL?"1px solid #ffd60a40":"1px solid #16162a",
+                      borderRadius:4,
+                      animation:isCurr&&occ&&!occ.isEnemy?"glowBdr 1.5s infinite":"none"}}>
+                    {occ&&(
+                      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:22,
+                        filter:!occ.isAlive?"grayscale(1) opacity(.35)":isCurr?"brightness(1.3)":"none",
+                        animation:occ.debuffs&&occ.debuffs.find(d=>d.type==="Stun")?"shakeLR .5s infinite":"none"}}>
+                        <div style={{lineHeight:1,marginBottom:1}}>{occ.isHost?"\u{1F451}":occ.isEnemy?occ.emoji:"\u{1F9D9}"}</div>
+                        {statuses.length>0&&<div style={{display:"flex",gap:1,flexWrap:"wrap",justifyContent:"center",maxWidth:CELL_SIZE-6}}>
+                          {statuses.slice(0,4).map((s,i)=><div key={i} style={{fontSize:8,lineHeight:1}} title={s.type+"("+s.turns+"t)"}>{STATUS_ICONS[s.type]||"?"}</div>)}
+                        </div>}
+                      </div>
+                    )}
+                    {occ&&<div style={{position:"absolute",bottom:1,left:2,right:2,height:3,background:"#111",borderRadius:2}}>
+                      <div style={{height:3,borderRadius:2,background:hpPct>.6?"#06d6a0":hpPct>.3?"#ffd60a":"#e63946",width:(hpPct*100)+"%"}}/>
+                    </div>}
+                    {occ&&occ.isEnemy&&<div style={{position:"absolute",top:2,right:2,width:5,height:5,borderRadius:"50%",background:occ.color}}/>}
+                  </div>
+                );
+              }))}
+            </div>
+            {hitFx.map(fx=>(
+              <div key={fx.id} style={{position:"absolute",top:cellPx(fx.row)+2,left:cellPx(fx.col)+2,color:fx.color,fontWeight:"bold",fontSize:12,pointerEvents:"none",zIndex:50,animation:"floatUp .9s forwards",textShadow:"0 1px 4px #000c",whiteSpace:"nowrap"}}>{fx.label}</div>
+            ))}
+          </div>
+
+          <div style={{flex:1,minWidth:200,display:"flex",flexDirection:"column",gap:8}}>
+            {isMyTurn&&currentPlayer&&<div style={{background:"#0d0e1c",border:"1px solid #4cc9f040",borderRadius:8,padding:10}}>
+              <div style={{fontSize:12,color:"#4cc9f0",marginBottom:8}}>▶ {currentPlayer.name} — E:{currentPlayer.energy}/{currentPlayer.maxEnergy}</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+                <ABtn label={hasMoved?"Moved ✓":"Move"} active={selAct==="move"} color="#4cc9f0" onClick={()=>selectAct("move")} disabled={hasMoved}/>
+                <ABtn label="Basic Atk" active={selAct==="basic"} color="#e05a00" onClick={()=>selectAct("basic")}/>
+                <ABtn label="Skip (+20E)" active={false} color="#666" onClick={skipTurn}/>
+              </div>
+              <div style={{fontSize:11,color:"#555",marginBottom:4}}>SKILLS</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:currentPlayer.consumables.length>0?8:0}}>
+                {currentPlayer.skills.map(sk=>{
+                  const cost=Math.max(1,sk.cost-(currentPlayer.skillCostReduce||0));
+                  return <ABtn key={sk.id} label={sk.name+" ("+cost+"E)"} active={selAct===sk.id} color={sk.isSupport?"#06d6a0":(sk.color||"#c77dff")} onClick={()=>selectAct(sk.id)} disabled={currentPlayer.energy<cost} onHover={()=>setHovSkill(sk)} onLeave={()=>setHovSkill(null)}/>;
+                })}
+              </div>
+              {currentPlayer.consumables.length>0&&<>
+                <div style={{fontSize:11,color:"#555",marginBottom:4,marginTop:4}}>ITEMS</div>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {currentPlayer.consumables.map((c,i)=><ABtn key={i} label={c.name} active={false} color="#ffd60a" onClick={()=>useConsumable(c)} onHover={()=>setHovSkill(c)} onLeave={()=>setHovSkill(null)}/>)}
+                </div>
+              </>}
+            </div>}
+            <div style={{background:"#0d0e1c",border:"1px solid #16162a",borderRadius:8,padding:8}}>
+              <div style={{fontSize:10,color:"#444",letterSpacing:2,marginBottom:6}}>HEROES</div>
+              {players.map(p=><UnitRow key={p.id} unit={p} isCurrent={currentSlot&&currentSlot.id===p.id&&!currentSlot.isEnemy} isPlayer/>)}
+            </div>
+            <div style={{background:"#0d0e1c",border:"1px solid #16162a",borderRadius:8,padding:8}}>
+              <div style={{fontSize:10,color:"#444",letterSpacing:2,marginBottom:6}}>ENEMIES</div>
+              {enemies.map(e=><UnitRow key={e.id} unit={e} isCurrent={currentSlot&&currentSlot.id===e.id&&currentSlot.isEnemy} isPlayer={false}/>)}
+            </div>
+          </div>
+        </div>
+
+        <div ref={logRef} style={{marginTop:8,background:"#070810",border:"1px solid #14142a",borderRadius:6,padding:"6px 10px",height:90,overflowY:"auto",fontSize:11}}>
+          {log.map(l=>{
+            const color=l.type==="combat"?"#e07030":l.type==="enemy"?"#e63946":l.type==="support"?"#06d6a0":l.type==="move"?"#4cc9f0":l.type==="system"?"#ffd60a":l.type==="debuff"?"#adb5bd":"#555";
+            return <div key={l.id} style={{marginBottom:2,color}}>{l.msg}</div>;
+          })}
+        </div>
+      </div>
     </div>
   );
 }
