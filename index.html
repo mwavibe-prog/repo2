@@ -600,12 +600,15 @@ function DungeonRift() {
   const queueRef = useRef(queue);
   const gsRef = useRef(gs);
   const fightRef = useRef(fightNum);
+  const qIdxRef = useRef(qIdx);
+  const execRemoteActionRef = useRef(null);
   useEffect(()=>{enemiesRef.current=enemies;},[enemies]);
   useEffect(()=>{playersRef.current=players;},[players]);
   useEffect(()=>{posRef.current=positions;},[positions]);
   useEffect(()=>{queueRef.current=queue;},[queue]);
   useEffect(()=>{gsRef.current=gs;},[gs]);
   useEffect(()=>{fightRef.current=fightNum;},[fightNum]);
+  useEffect(()=>{qIdxRef.current=qIdx;},[qIdx]);
 
   const pushLog = useCallback((msg,type)=>{setLog(prev=>[...prev.slice(-60),{msg,type:type||"info",id:uid()}]);},[]);
   const showNotif = useCallback((msg,color)=>{setNotif({msg,color:color||"#ffd60a"});setTimeout(()=>setNotif(null),2200);},[]);
@@ -680,7 +683,7 @@ function DungeonRift() {
             } else if(msg.type==="ready"){
               setReady(prev=>({...prev,[conn.peer]:!prev[conn.peer]}));
             } else if(msg.type==="action"){
-              window._remoteAction = msg; // action bus for client actions on host
+              execRemoteActionRef.current && execRemoteActionRef.current(conn.peer, msg);
             }
           });
           conn.on("close", ()=>{
@@ -701,6 +704,12 @@ function DungeonRift() {
     }
   },[myRole,peerId,players.length]);
 
+  // On client, default the shop view tab to their own character when arriving at shop
+  useEffect(()=>{
+    if(myRole==="client"&&screen==="shop"&&peerId) setShopVid(peerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[screen,myRole,peerId]);
+
   // Broadcast state changes from host to clients
   useEffect(()=>{
     if(myRole!=="host") return;
@@ -715,7 +724,10 @@ function DungeonRift() {
 
   const startWorld = ()=>{if(cfg.tutorial){setScreen("tutorial");return;}goToShop(players);};
 
-  const buyItem = (pid,item)=>{
+  const _execBuyFor = (pid, itemId)=>{
+    const items = (shopItems[pid]||[]);
+    const item = items.find(i=>i.id===itemId);
+    if(!item) return;
     setPlayers(prev=>prev.map(p=>{
       if(p.id!==pid||p.gold<item.cost) return p;
       let u={...p};
@@ -724,11 +736,22 @@ function DungeonRift() {
       else {u.consumables=[...u.consumables,item];u.gold-=item.cost;}
       return u;
     }));
-    setShopItems(prev=>({...prev,[pid]:prev[pid].filter(i=>i.id!==item.id)}));
+    setShopItems(prev=>({...prev,[pid]:(prev[pid]||[]).filter(i=>i.id!==itemId)}));
     if(!shopBuyCD){setShopBuyCD(true);setShopMsg(randPick(SK_BUY));setTimeout(()=>{setShopBuyCD(false);setShopMsg(randPick(SK_LINES));},3500);}
   };
 
+  const buyItem = (pid,item)=>{
+    if(myRole==="client"){
+      // Clients can only buy for their own peer id
+      if(pid!==peerId) return;
+      if(hostConnRef.current&&hostConnRef.current.open) hostConnRef.current.send({type:"action",kind:"buy",pid,itemId:item.id});
+      return;
+    }
+    _execBuyFor(pid, item.id);
+  };
+
   const enterCombat = ()=>{
+    if(myRole!=="host") return;
     if(chatterRef.current)clearInterval(chatterRef.current);
     const nf=fightNum+1; setFightNum(nf);
     const isBoss=nf%5===0;
@@ -921,7 +944,7 @@ function DungeonRift() {
   const currentSlot = queue[qIdx];
   const currentIsEnemy = currentSlot?currentSlot.isEnemy:false;
   const currentPlayer = !currentIsEnemy?players.find(p=>p.id===(currentSlot?currentSlot.id:null)):null;
-  const isMyTurn = !!currentPlayer&&currentPlayer.isAlive&&!enemyActing&&myRole==="host";
+  const isMyTurn = !!currentPlayer&&currentPlayer.isAlive&&!enemyActing&&currentPlayer.id===peerId;
   const getOccupied = ()=>[...Object.values(positions.players),...Object.values(positions.enemies)];
   const getSkillRange = (skill)=>skill.range!==undefined?skill.range:3;
 
@@ -1079,47 +1102,69 @@ function DungeonRift() {
 
   const handleCell = (row,col)=>{
     if(!isMyTurn||!selAct) return;
-    const pPos=positions.players[currentPlayer.id];
-    if(!pPos) return;
-    if(selAct==="move"){
-      if(!hlMove.some(c=>c.row===row&&c.col===col)) return;
-      setPositions(prev=>({...prev,players:{...prev.players,[currentPlayer.id]:{row,col}}}));
-      setHasMoved(true); clearAction();
-      pushLog(currentPlayer.name+" moves","move");
+    // Local UI validation (both host and client check highlights to avoid bad clicks)
+    if(selAct==="move"&&!hlMove.some(c=>c.row===row&&c.col===col)) return;
+    if(selAct!=="move"&&!hlAtk.some(c=>c.row===row&&c.col===col)) return;
+    if(myRole==="client"){
+      if(hostConnRef.current&&hostConnRef.current.open) hostConnRef.current.send({type:"action",kind:"cell",selAct,row,col});
+      clearAction();
       return;
     }
-    if(!hlAtk.some(c=>c.row===row&&c.col===col)) return;
-    const enemyAt=enemies.find(e=>{const ep=positions.enemies[e.id];return ep&&ep.row===row&&ep.col===col&&e.isAlive;});
-    const allyAt=players.find(p=>{const pp=positions.players[p.id];return pp&&pp.row===row&&pp.col===col&&p.id!==currentPlayer.id&&p.isAlive;});
-    const isSelf=pPos.row===row&&pPos.col===col;
-    if(selAct==="basic"){if(!enemyAt) return; doBasicAtk(currentPlayer,enemyAt); return;}
-    const skill=currentPlayer.skills.find(s=>s.id===selAct);
-    if(!skill) return;
-    const cost=Math.max(1,skill.cost-(currentPlayer.skillCostReduce||0));
-    if(currentPlayer.energy<cost){showNotif("Not enough energy!","#e63946");return;}
-    if(skill.aoe&&skill.target==="ally"){doAoeBuff(currentPlayer,skill,cost);return;}
-    if(skill.aoer>0&&skill.target==="enemy"){doRadiusAtk(currentPlayer,skill,cost,{row,col});return;}
-    if(skill.aoer>0&&skill.dispel){doRadiusDispel(currentPlayer,skill,cost,{row,col});return;}
-    if(skill.target==="enemy"&&enemyAt){doSkillAtk(currentPlayer,enemyAt,skill,cost);return;}
-    if(skill.target==="self"&&isSelf){doSelf(currentPlayer,skill,cost);return;}
-    if(skill.target==="ally"&&allyAt){doSupport(currentPlayer,allyAt,skill,cost);return;}
-    if(skill.target==="ally"&&isSelf){doSupport(currentPlayer,currentPlayer,skill,cost);return;}
+    execCellFor(currentPlayer, selAct, row, col);
   };
 
-  const skipTurn = ()=>{
-    if(!isMyTurn) return;
-    const ticked=tickUnit(currentPlayer);
+  // --- Action executors (shared between local host UI and remote client messages) ---
+  const execSkipFor = (actor)=>{
+    if(!actor||!actor.isAlive) return;
+    const ticked=tickUnit(actor);
     const newE=Math.min(ticked.maxEnergy,ticked.energy+20);
-    const updP=players.map(p=>p.id!==currentPlayer.id?p:{...ticked,energy:newE});
+    const updP=playersRef.current.map(p=>p.id!==actor.id?p:{...ticked,energy:newE});
     setPlayers(updP);
-    pushLog(currentPlayer.name+" skips +20E","info");
-    clearAction(); advanceTurn(enemies,updP);
+    pushLog(actor.name+" skips +20E","info");
+    clearAction(); advanceTurn(enemiesRef.current,updP);
   };
 
-  const useConsumable = (item)=>{
-    if(!isMyTurn) return;
-    const updP=players.map(p=>{
-      if(p.id!==currentPlayer.id) return p;
+  const execCellFor = (actor, selActParam, row, col)=>{
+    if(!actor||!actor.isAlive||!selActParam) return;
+    const posNow=posRef.current, enemiesNow=enemiesRef.current, playersNow=playersRef.current, gsNow=gsRef.current;
+    const pPos=posNow.players[actor.id];
+    if(!pPos) return;
+    if(selActParam==="move"){
+      const occ=[...Object.values(posNow.players),...Object.values(posNow.enemies)].filter(o=>!(o.row===pPos.row&&o.col===pPos.col));
+      const slow=actor.debuffs.find(d=>d.type==="Slow");
+      const mr=Math.max(1,actor.moveRange-(slow?slow.val:0));
+      const reachable=getReachable(pPos,mr,gsNow,occ);
+      if(!reachable.some(c=>c.row===row&&c.col===col)) return;
+      setPositions(prev=>({...prev,players:{...prev.players,[actor.id]:{row,col}}}));
+      setHasMoved(true); clearAction();
+      pushLog(actor.name+" moves","move");
+      return;
+    }
+    // Attack/skill validation: target must be within range
+    const reach=getAttackable(pPos,selActParam==="basic"?2:(actor.skills.find(s=>s.id===selActParam)||{range:3}).range,gsNow);
+    if(!reach.some(c=>c.row===row&&c.col===col)&&!(selActParam!=="basic"&&pPos.row===row&&pPos.col===col)) return;
+    const enemyAt=enemiesNow.find(e=>{const ep=posNow.enemies[e.id];return ep&&ep.row===row&&ep.col===col&&e.isAlive;});
+    const allyAt=playersNow.find(p=>{const pp=posNow.players[p.id];return pp&&pp.row===row&&pp.col===col&&p.id!==actor.id&&p.isAlive;});
+    const isSelf=pPos.row===row&&pPos.col===col;
+    if(selActParam==="basic"){if(!enemyAt) return; doBasicAtk(actor,enemyAt); return;}
+    const skill=actor.skills.find(s=>s.id===selActParam);
+    if(!skill) return;
+    const cost=Math.max(1,skill.cost-(actor.skillCostReduce||0));
+    if(actor.energy<cost){showNotif("Not enough energy!","#e63946");return;}
+    if(skill.aoe&&skill.target==="ally"){doAoeBuff(actor,skill,cost);return;}
+    if(skill.aoer>0&&skill.target==="enemy"){doRadiusAtk(actor,skill,cost,{row,col});return;}
+    if(skill.aoer>0&&skill.dispel){doRadiusDispel(actor,skill,cost,{row,col});return;}
+    if(skill.target==="enemy"&&enemyAt){doSkillAtk(actor,enemyAt,skill,cost);return;}
+    if(skill.target==="self"&&isSelf){doSelf(actor,skill,cost);return;}
+    if(skill.target==="ally"&&allyAt){doSupport(actor,allyAt,skill,cost);return;}
+    if(skill.target==="ally"&&isSelf){doSupport(actor,actor,skill,cost);return;}
+  };
+
+  const execConsumableFor = (actor, itemId)=>{
+    const item = actor.consumables.find(c=>c.id===itemId);
+    if(!item) return;
+    const updP=playersRef.current.map(p=>{
+      if(p.id!==actor.id) return p;
       let u={...p,consumables:p.consumables.filter(c=>c.id!==item.id)};
       if(item.effect.healPct) u.hp=Math.min(p.maxHp,p.hp+Math.round(p.maxHp*item.effect.healPct));
       if(item.effect.healFull) u.hp=p.maxHp;
@@ -1131,7 +1176,46 @@ function DungeonRift() {
       return u;
     });
     setPlayers(updP);
-    pushLog(currentPlayer.name+" uses "+item.name,"support");
+    pushLog(actor.name+" uses "+item.name,"support");
+  };
+
+  // Called on host when a client sends an action
+  const execRemoteAction = (senderPeerId, msg)=>{
+    // Shop buys can happen any time (out of combat). Scope to the sender's own id.
+    if(msg.kind==="buy"){
+      if(msg.pid!==senderPeerId) return;
+      _execBuyFor(senderPeerId, msg.itemId);
+      return;
+    }
+    // Combat actions: sender must be the current acting player
+    const q=queueRef.current; const slot=q[qIdxRef.current];
+    if(!slot||slot.isEnemy||slot.id!==senderPeerId) return;
+    const actor=playersRef.current.find(p=>p.id===senderPeerId);
+    if(!actor||!actor.isAlive) return;
+    if(msg.kind==="skip") execSkipFor(actor);
+    else if(msg.kind==="cell") execCellFor(actor, msg.selAct, msg.row, msg.col);
+    else if(msg.kind==="consumable") execConsumableFor(actor, msg.itemId);
+  };
+  // Keep ref updated so PeerJS onData callback (set up before handler defs) can reach latest version
+  execRemoteActionRef.current = execRemoteAction;
+
+  const skipTurn = ()=>{
+    if(!isMyTurn) return;
+    if(myRole==="client"){
+      if(hostConnRef.current&&hostConnRef.current.open) hostConnRef.current.send({type:"action",kind:"skip"});
+      clearAction();
+      return;
+    }
+    execSkipFor(currentPlayer);
+  };
+
+  const useConsumable = (item)=>{
+    if(!isMyTurn) return;
+    if(myRole==="client"){
+      if(hostConnRef.current&&hostConnRef.current.open) hostConnRef.current.send({type:"action",kind:"consumable",itemId:item.id});
+      return;
+    }
+    execConsumableFor(currentPlayer, item.id);
   };
 
   const getCellOcc = (row,col)=>{
