@@ -397,41 +397,50 @@ function ToggleRow({label,hint,val,onChange,color}) {
   );
 }
 
-function LobbyScreen({gameCode,players,ready,onAdd,onToggle,onNext,allReady}) {
+function LobbyScreen({myRole,peerId,joinUrl,players,ready,onToggle,onNext,allReady,connError}) {
+  const qrRef = useRef(null);
+  useEffect(()=>{
+    if(myRole!=="host"||!joinUrl||!qrRef.current||!window.QRCode) return;
+    window.QRCode.toCanvas(qrRef.current,joinUrl,{width:180,margin:1,color:{dark:"#ffd60a",light:"#111111"}},(err)=>{if(err)console.error(err);});
+  },[myRole,joinUrl]);
+  const isClient = myRole==="client";
   return (
     <div style={{minHeight:"100vh",background:"#07080f",color:"#dde",fontFamily:"'Courier New',monospace",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{display:"flex",gap:24,justifyContent:"center",alignItems:"center",marginBottom:20}}>
-        <div style={{height:60,padding:"0 20px",background:"#1a1a2a",borderRadius:8,display:"flex",alignItems:"center",color:"#888",fontSize:11}}>WEESWARES</div>
-        <div style={{height:60,padding:"0 20px",background:"#1a1a2a",borderRadius:8,display:"flex",alignItems:"center",color:"#888",fontSize:11}}>CREST SECONDARY</div>
-      </div>
       <div style={{fontSize:36,fontWeight:"bold",color:"#ffd60a",letterSpacing:6,marginBottom:2}}>DUNGEON RIFT</div>
       <div style={{color:"#333",letterSpacing:4,fontSize:11,marginBottom:32}}>MULTIPLAYER TACTICAL ROGUELIKE</div>
-      <div style={{display:"flex",gap:24,flexWrap:"wrap",justifyContent:"center"}}>
-        <div style={{background:"#0d0e18",border:"1px solid #1a1a2a",borderRadius:10,padding:20,minWidth:220}}>
-          <div style={{fontSize:11,color:"#444",letterSpacing:2,marginBottom:12}}>JOIN CODE</div>
-          <div style={{fontSize:38,fontWeight:"bold",color:"#ffd60a",letterSpacing:8,textAlign:"center",marginBottom:16}}>{gameCode}</div>
-          <div style={{background:"#111",borderRadius:6,padding:12,textAlign:"center"}}>
-            <div style={{fontSize:10,color:"#333",marginBottom:8}}>QR CODE</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(10,9px)",gap:1,margin:"0 auto",width:"fit-content"}}>
-              {Array.from({length:100},(_,i)=><div key={i} style={{width:9,height:9,background:Math.random()>.45?"#ffd60a":"#1a1a1a",borderRadius:1}}/>)}
-            </div>
+      {connError&&<div style={{color:"#e63946",marginBottom:16,fontSize:12}}>⚠ {connError}</div>}
+      <div style={{display:"flex",gap:24,flexWrap:"wrap",justifyContent:"center",alignItems:"flex-start"}}>
+        {myRole==="host"&&<div style={{background:"#0d0e18",border:"1px solid #1a1a2a",borderRadius:10,padding:20,minWidth:240}}>
+          <div style={{fontSize:11,color:"#444",letterSpacing:2,marginBottom:12,textAlign:"center"}}>SCAN TO JOIN</div>
+          <div style={{background:"#111",borderRadius:6,padding:10,display:"flex",justifyContent:"center"}}>
+            {peerId?<canvas ref={qrRef} style={{borderRadius:4}}/>:<div style={{width:180,height:180,display:"flex",alignItems:"center",justifyContent:"center",color:"#444",fontSize:11}}>Connecting...</div>}
           </div>
-        </div>
+          <div style={{fontSize:9,color:"#333",marginTop:10,wordBreak:"break-all",textAlign:"center"}}>{joinUrl||"…"}</div>
+        </div>}
+        {isClient&&<div style={{background:"#0d0e18",border:"1px solid #1a1a2a",borderRadius:10,padding:20,minWidth:240,textAlign:"center"}}>
+          <div style={{fontSize:11,color:"#444",letterSpacing:2,marginBottom:12}}>JOINED AS CLIENT</div>
+          <div style={{fontSize:32,marginBottom:10}}>{"\u{1F9D9}"}</div>
+          <div style={{fontSize:12,color:"#999"}}>Waiting for host to start the game...</div>
+        </div>}
         <div style={{background:"#0d0e18",border:"1px solid #1a1a2a",borderRadius:10,padding:20,minWidth:280}}>
           <div style={{fontSize:11,color:"#444",letterSpacing:2,marginBottom:12}}>PLAYERS ({players.length})</div>
+          {players.length===0&&<div style={{fontSize:11,color:"#333",padding:"8px 0"}}>No players yet — scan the QR code to join.</div>}
           {players.map(p=>(
             <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #111"}}>
               <div>
                 <div style={{color:p.isHost?"#ffd60a":"#ccc",fontSize:13}}>{p.isHost?"\u{1F451}":"\u{1F9D9}"} {p.name}</div>
                 <div style={{fontSize:10,color:"#444"}}>Skill: {p.skills[0]?p.skills[0].name:"?"}</div>
               </div>
-              <button onClick={()=>onToggle(p.id)} style={{background:ready[p.id]?"#06d6a0":"transparent",border:"1px solid "+(ready[p.id]?"#06d6a0":"#333"),color:ready[p.id]?"#000":"#555",padding:"4px 10px",borderRadius:4,cursor:"pointer",fontSize:11,fontFamily:"'Courier New',monospace"}}>{ready[p.id]?"READY ✓":"Not Ready"}</button>
+              {myRole==="host"?(
+                <button onClick={()=>onToggle(p.id)} style={{background:ready[p.id]?"#06d6a0":"transparent",border:"1px solid "+(ready[p.id]?"#06d6a0":"#333"),color:ready[p.id]?"#000":"#555",padding:"4px 10px",borderRadius:4,cursor:"pointer",fontSize:11,fontFamily:"'Courier New',monospace"}}>{ready[p.id]?"READY ✓":"Not Ready"}</button>
+              ):(
+                <span style={{fontSize:11,color:ready[p.id]?"#06d6a0":"#555"}}>{ready[p.id]?"READY ✓":"..."}</span>
+              )}
             </div>
           ))}
-          <button onClick={onAdd} style={{marginTop:12,width:"100%",background:"transparent",border:"1px dashed #2a2a2a",color:"#444",padding:8,borderRadius:4,cursor:"pointer",fontSize:12,fontFamily:"'Courier New',monospace"}}>+ Add Player</button>
         </div>
       </div>
-      <button onClick={onNext} disabled={!allReady||players.length===0} style={{marginTop:28,background:allReady?"#ffd60a":"#111",border:"none",color:allReady?"#000":"#333",padding:"12px 40px",borderRadius:6,fontSize:16,cursor:allReady?"pointer":"not-allowed",fontWeight:"bold",fontFamily:"'Courier New',monospace",letterSpacing:3}}>{allReady?"PROCEED ▶":"Waiting..."}</button>
+      {myRole==="host"&&<button onClick={onNext} disabled={!allReady||players.length===0} style={{marginTop:28,background:allReady?"#ffd60a":"#111",border:"none",color:allReady?"#000":"#333",padding:"12px 40px",borderRadius:6,fontSize:16,cursor:allReady&&players.length>0?"pointer":"not-allowed",fontWeight:"bold",fontFamily:"'Courier New',monospace",letterSpacing:3}}>{allReady&&players.length>0?"PROCEED ▶":"Waiting for players..."}</button>}
     </div>
   );
 }
@@ -531,7 +540,13 @@ function GameOverScreen({fightNum,players,onRestart}) {
 
 export default function DungeonRift() {
   const [screen, setScreen] = useState("lobby");
-  const [gameCode] = useState(()=>genCode());
+  const [myRole, setMyRole] = useState("undecided");
+  const [peerId, setPeerId] = useState(null);
+  const [hostId, setHostId] = useState(null);
+  const [connError, setConnError] = useState(null);
+  const peerRef = useRef(null);
+  const hostConnRef = useRef(null);
+  const connsRef = useRef([]);
   const [players, setPlayers] = useState([]);
   const [ready, setReady] = useState({});
   const [cfg, setCfg] = useState({difficulty:"medium",hostPlay:false,tutorial:false});
@@ -588,9 +603,88 @@ export default function DungeonRift() {
   },[]);
   useEffect(()=>()=>{if(chatterRef.current)clearInterval(chatterRef.current);},[]);
 
-  const addPlayer = ()=>{const id=uid();setPlayers(prev=>[...prev,makePlayer(id,"Player "+(prev.length+1),prev.length===0)]);};
   const toggleReady = id=>setReady(prev=>({...prev,[id]:!prev[id]}));
   const allReady = players.length>0&&players.every(p=>ready[p.id]);
+  const joinUrl = myRole==="host"&&peerId?(window.location.origin+window.location.pathname+"?room="+peerId):"";
+
+  // Detect role from URL
+  useEffect(()=>{
+    const params = new URLSearchParams(window.location.search);
+    const room = params.get("room");
+    if(room){setMyRole("client");setHostId(room);} else setMyRole("host");
+  },[]);
+
+  // Setup PeerJS
+  useEffect(()=>{
+    if(myRole==="undecided"||!window.Peer) return;
+    const peer = new window.Peer();
+    peerRef.current = peer;
+    peer.on("open", id=>{
+      setPeerId(id);
+      if(myRole==="client"&&hostId){
+        const conn = peer.connect(hostId,{reliable:true});
+        hostConnRef.current = conn;
+        conn.on("open", ()=>{
+          conn.send({type:"join",name:"Player "+Math.floor(Math.random()*900+100)});
+        });
+        conn.on("data", msg=>{
+          if(msg.type==="state"){
+            if(msg.players) setPlayers(msg.players);
+            if(msg.ready) setReady(msg.ready);
+            if(msg.screen) setScreen(msg.screen);
+            if(msg.enemies) setEnemies(msg.enemies);
+            if(msg.positions) setPositions(msg.positions);
+            if(msg.gs) setGs(msg.gs);
+            if(msg.queue) setQueue(msg.queue);
+            if(msg.qIdx!==undefined) setQIdx(msg.qIdx);
+            if(msg.fightNum!==undefined) setFightNum(msg.fightNum);
+            if(msg.enemyActing!==undefined) setEnemyActing(msg.enemyActing);
+            if(msg.log) setLog(msg.log);
+            if(msg.shopItems) setShopItems(msg.shopItems);
+            if(msg.shopVid) setShopVid(msg.shopVid);
+          }
+        });
+        conn.on("error", e=>setConnError("Connection error: "+(e.message||e)));
+      }
+    });
+    peer.on("error", e=>setConnError(e.type==="peer-unavailable"?"Host not found — is the link still valid?":(e.message||String(e))));
+    if(myRole==="host"){
+      peer.on("connection", conn=>{
+        conn.on("open", ()=>{
+          connsRef.current = [...connsRef.current, conn];
+          conn.on("data", msg=>{
+            if(msg.type==="join"){
+              setPlayers(prev=>prev.find(p=>p.id===conn.peer)?prev:[...prev,makePlayer(conn.peer, msg.name||"Player", false)]);
+            } else if(msg.type==="ready"){
+              setReady(prev=>({...prev,[conn.peer]:!prev[conn.peer]}));
+            } else if(msg.type==="action"){
+              window._remoteAction = msg; // action bus for client actions on host
+            }
+          });
+          conn.on("close", ()=>{
+            connsRef.current = connsRef.current.filter(c=>c!==conn);
+            setPlayers(prev=>prev.filter(p=>p.id!==conn.peer));
+            setReady(prev=>{const n={...prev};delete n[conn.peer];return n;});
+          });
+        });
+      });
+    }
+    return ()=>{try{peer.destroy();}catch(e){}};
+  },[myRole,hostId]);
+
+  // Auto-create host player entry
+  useEffect(()=>{
+    if(myRole==="host"&&peerId&&players.length===0){
+      setPlayers([makePlayer(peerId,"Host",true)]);
+    }
+  },[myRole,peerId,players.length]);
+
+  // Broadcast state changes from host to clients
+  useEffect(()=>{
+    if(myRole!=="host") return;
+    const payload = {type:"state",screen,players,ready,enemies,positions,gs,queue,qIdx,fightNum,enemyActing,log,shopItems,shopVid};
+    connsRef.current.forEach(c=>{try{if(c.open)c.send(payload);}catch(e){}});
+  },[myRole,screen,players,ready,enemies,positions,gs,queue,qIdx,fightNum,enemyActing,log,shopItems,shopVid]);
 
   const goToShop = (pls)=>{
     const items={}; pls.forEach(p=>{items[p.id]=genShopItems(p);});
@@ -686,13 +780,15 @@ export default function DungeonRift() {
 
   const doEnemyTurn = useCallback((rawEnemy)=>{
     const latestE=enemiesRef.current, latestP=playersRef.current, latestPos=posRef.current;
-    const ticked=tickUnit(latestE.find(e=>e.id===rawEnemy.id)||rawEnemy);
+    const rawE=latestE.find(e=>e.id===rawEnemy.id)||rawEnemy;
+    const wasStunned=rawE.debuffs&&rawE.debuffs.some(d=>d.type==="Stun");
+    const ticked=tickUnit(rawE);
     const newEnergy=Math.min(ticked.maxEnergy,ticked.energy+ticked.energyRegen);
     const tickedE={...ticked,energy:newEnergy};
     let updE=latestE.map(e=>e.id===rawEnemy.id?tickedE:e);
     setEnemies(updE);
     if(!tickedE.isAlive){setEnemyActing(false);advanceTurn(updE,latestP);return;}
-    if(tickedE.debuffs.find(d=>d.type==="Stun")){pushLog(tickedE.name+" is stunned!","debuff");setEnemyActing(false);advanceTurn(updE,latestP);return;}
+    if(wasStunned){pushLog(tickedE.name+" is stunned!","debuff");setEnemyActing(false);advanceTurn(updE,latestP);return;}
     const alivePl=latestP.filter(p=>p.isAlive);
     if(!alivePl.length){setEnemyActing(false);advanceTurn(updE,latestP);return;}
     const target=randPick(alivePl);
@@ -772,7 +868,7 @@ export default function DungeonRift() {
   },[advanceTurn,pushLog,spawnFx]);
 
   useEffect(()=>{
-    if(screen!=="combat") return;
+    if(screen!=="combat"||myRole!=="host") return;
     const slot=queue[qIdx];
     if(!slot||!slot.isEnemy) return;
     const enemy=enemies.find(e=>e.id===slot.id);
@@ -781,27 +877,29 @@ export default function DungeonRift() {
     const t=setTimeout(()=>doEnemyTurn(enemy),900);
     return ()=>clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[qIdx,screen]);
+  },[qIdx,screen,myRole]);
 
   useEffect(()=>{
-    if(screen!=="combat") return;
+    if(screen!=="combat"||myRole!=="host") return;
     const slot=queue[qIdx];
     if(!slot||slot.isEnemy) return;
     const player=players.find(p=>p.id===slot.id);
     if(!player) return;
     if(!player.isAlive){advanceTurn(enemies,players);return;}
+    const wasStunned=player.debuffs&&player.debuffs.some(d=>d.type==="Stun");
     const ticked=tickUnit(player);
     const newE=Math.min(ticked.maxEnergy,ticked.energy+ticked.energyRegen);
     const updP=players.map(p=>p.id===slot.id?{...ticked,energy:newE}:p);
     setPlayers(updP);
-    if(!ticked.isAlive) setTimeout(()=>advanceTurn(enemies,updP),50);
+    if(!ticked.isAlive){setTimeout(()=>advanceTurn(enemies,updP),50);return;}
+    if(wasStunned){pushLog(ticked.name+" is stunned!","debuff");setTimeout(()=>advanceTurn(enemies,updP),300);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[qIdx,screen]);
+  },[qIdx,screen,myRole]);
 
   const currentSlot = queue[qIdx];
   const currentIsEnemy = currentSlot?currentSlot.isEnemy:false;
   const currentPlayer = !currentIsEnemy?players.find(p=>p.id===(currentSlot?currentSlot.id:null)):null;
-  const isMyTurn = !!currentPlayer&&currentPlayer.isAlive&&!enemyActing;
+  const isMyTurn = !!currentPlayer&&currentPlayer.isAlive&&!enemyActing&&myRole==="host";
   const getOccupied = ()=>[...Object.values(positions.players),...Object.values(positions.enemies)];
   const getSkillRange = (skill)=>skill.range!==undefined?skill.range:3;
 
@@ -1022,7 +1120,7 @@ export default function DungeonRift() {
     return null;
   };
 
-  if(screen==="lobby") return <LobbyScreen gameCode={gameCode} players={players} ready={ready} onAdd={addPlayer} onToggle={toggleReady} onNext={()=>setScreen("worldcreation")} allReady={allReady}/>;
+  if(screen==="lobby") return <LobbyScreen myRole={myRole} peerId={peerId} joinUrl={joinUrl} players={players} ready={ready} onToggle={toggleReady} onNext={()=>setScreen("worldcreation")} allReady={allReady} connError={connError}/>;
   if(screen==="worldcreation") return <WorldScreen cfg={cfg} onChange={setCfg} onStart={startWorld} players={players}/>;
   if(screen==="tutorial") return <TutorialScreen onFinish={()=>goToShop(players)}/>;
   if(screen==="shop") return <ShopScreen players={players} shopItems={shopItems} shopMsg={shopMsg} fightNum={fightNum} onBuy={buyItem} onEnter={enterCombat} viewId={shopVid} setViewId={setShopVid}/>;
@@ -1084,7 +1182,7 @@ export default function DungeonRift() {
                     {occ&&(
                       <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:22,
                         filter:!occ.isAlive?"grayscale(1) opacity(.35)":isCurr?"brightness(1.3)":"none",
-                        animation:occ.debuffs&&occ.debuffs.find(d=>d.type==="Stun")?"shakeLR .5s infinite":"none"}}>
+                        animation:occ.isAlive&&occ.debuffs&&occ.debuffs.find(d=>d.type==="Stun")?"shakeLR .5s infinite":"none"}}>
                         <div style={{lineHeight:1,marginBottom:1}}>{occ.isHost?"\u{1F451}":occ.isEnemy?occ.emoji:"\u{1F9D9}"}</div>
                         {statuses.length>0&&<div style={{display:"flex",gap:1,flexWrap:"wrap",justifyContent:"center",maxWidth:CELL_SIZE-6}}>
                           {statuses.slice(0,4).map((s,i)=><div key={i} style={{fontSize:8,lineHeight:1}} title={s.type+"("+s.turns+"t)"}>{STATUS_ICONS[s.type]||"?"}</div>)}
@@ -1110,7 +1208,7 @@ export default function DungeonRift() {
               <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
                 <ABtn label={hasMoved?"Moved ✓":"Move"} active={selAct==="move"} color="#4cc9f0" onClick={()=>selectAct("move")} disabled={hasMoved}/>
                 <ABtn label="Basic Atk" active={selAct==="basic"} color="#e05a00" onClick={()=>selectAct("basic")}/>
-                <ABtn label="Skip (+20E)" active={false} color="#666" onClick={skipTurn}/>
+                <ABtn label="Skip Turn +20E" active={false} color="#666" onClick={skipTurn}/>
               </div>
               <div style={{fontSize:11,color:"#555",marginBottom:4}}>SKILLS</div>
               <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:currentPlayer.consumables.length>0?8:0}}>
